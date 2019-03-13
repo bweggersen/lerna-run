@@ -8,6 +8,7 @@ const batchPackages = require("@lerna/batch-packages");
 const runParallelBatches = require("@lerna/run-parallel-batches");
 const output = require("@lerna/output");
 const timer = require("@lerna/timer");
+const PackageGraph = require("@lerna/package-graph");
 const ValidationError = require("@lerna/validation-error");
 const { getFilteredPackages } = require("@lerna/filter-options");
 
@@ -131,13 +132,44 @@ class RunCommand extends Command {
   }
 
   runScriptInPackagesBatched() {
-    const runner = this.options.stream
-      ? pkg => this.runScriptInPackageStreaming(pkg)
-      : pkg => this.runScriptInPackageCapturing(pkg);
+    const graph = new PackageGraph(this.packagesWithScript);
 
-    return runParallelBatches(this.batchedPackages, this.concurrency, runner).then(batchedResults =>
-      batchedResults.reduce((arr, batch) => arr.concat(batch), [])
-    );
+    const iterable = {
+      next() {
+        if (graph.size === 0) {
+          return {
+            done: true,
+          };
+        }
+
+        const candidate = Array.from(graph.values()).find(node => node.localDependencies.size === 0);
+        const nextValue = candidate ? candidate.pkg : Promise.reject(pMap.NO_AVAILABLE_JOBS);
+
+        if (candidate) {
+          graph.delete(candidate.name);
+        }
+
+        return {
+          done: false,
+          value: nextValue,
+        };
+      },
+
+      [Symbol.iterator]() {
+        return this;
+      },
+    };
+
+    const pruneGraph = pkg => val => {
+      graph.remove(pkg);
+      return val;
+    };
+
+    const runner = this.options.stream
+      ? pkg => this.runScriptInPackageStreaming(pkg).then(pruneGraph(pkg))
+      : pkg => this.runScriptInPackageCapturing(pkg).then(pruneGraph(pkg));
+
+    return pMap(iterable, runner, { concurrency: this.concurrency });
   }
 
   runScriptInPackagesParallel() {
