@@ -45,6 +45,6 @@
   "dependencies": {
     "@lerna/npm-run-script": "^3.0.0",
     "@lerna/timer": "^3.0.0",
-    "p-map": "bweggersen/p-map#bewegger/pausable-thread"
+    "p-map": "bweggersen/p-map#6bfe920fad80282b7f0b06e2ce033466f0609b02"
   }
 }
