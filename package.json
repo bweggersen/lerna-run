@@ -45,6 +45,6 @@
   "dependencies": {
     "@lerna/npm-run-script": "^3.0.0",
     "@lerna/timer": "^3.0.0",
-    "p-map": "bweggersen/p-map#6bfe920fad80282b7f0b06e2ce033466f0609b02"
+    "p-map": "bweggersen/p-map#10c55aea3a24dc1a968211cc0238c187d5892627"
   }
 }
