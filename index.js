@@ -130,6 +130,8 @@ class RunCommand extends Command {
     const queue = new PQueue({ concurrency: this.concurrency });
     const graph = new QueryGraph(this.packagesWithScript, this.options.rejectCycles);
 
+    process.stdout.write(`@lerna/run -> runScriptInPackagesTopological() with ${this.concurrency} concurrent threads`);
+
     const runner = this.options.stream
       ? pkg => this.runScriptInPackageStreaming(pkg)
       : pkg => this.runScriptInPackageCapturing(pkg);
