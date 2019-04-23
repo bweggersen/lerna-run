@@ -1,14 +1,13 @@
 "use strict";
 
 const pMap = require("p-map");
+const PQueue = require("p-queue");
 
 const Command = require("@lerna/command");
 const npmRunScript = require("@lerna/npm-run-script");
-const batchPackages = require("@lerna/batch-packages");
-const runParallelBatches = require("@lerna/run-parallel-batches");
 const output = require("@lerna/output");
 const timer = require("@lerna/timer");
-const PackageGraph = require("@lerna/package-graph");
+const QueryGraph = require("@lerna/query-graph");
 const ValidationError = require("@lerna/validation-error");
 const { getFilteredPackages } = require("@lerna/filter-options");
 
@@ -59,10 +58,6 @@ class RunCommand extends Command {
         // still exits zero, aka "ok"
         return false;
       }
-
-      this.batchedPackages = this.toposort
-        ? batchPackages(this.packagesWithScript, this.options.rejectCycles)
-        : [this.packagesWithScript];
     });
   }
 
@@ -81,7 +76,7 @@ class RunCommand extends Command {
     if (this.options.parallel) {
       chain = chain.then(() => this.runScriptInPackagesParallel());
     } else {
-      chain = chain.then(() => this.runScriptInPackagesBatched());
+      chain = chain.then(() => this.runScriptInPackagesTopological());
     }
 
     if (this.bail) {
@@ -131,45 +126,35 @@ class RunCommand extends Command {
     };
   }
 
-  runScriptInPackagesBatched() {
-    const graph = new PackageGraph(this.packagesWithScript);
-
-    const iterable = {
-      next() {
-        if (graph.size === 0) {
-          return {
-            done: true,
-          };
-        }
-
-        const candidate = Array.from(graph.values()).find(node => node.localDependencies.size === 0);
-        const nextValue = candidate ? candidate.pkg : Promise.reject(pMap.NO_AVAILABLE_JOBS);
-
-        if (candidate) {
-          graph.delete(candidate.name);
-        }
-
-        return {
-          done: false,
-          value: nextValue,
-        };
-      },
-
-      [Symbol.iterator]() {
-        return this;
-      },
-    };
-
-    const pruneGraph = pkg => val => {
-      graph.remove(pkg);
-      return val;
-    };
+  runScriptInPackagesTopological() {
+    const queue = new PQueue({ concurrency: this.concurrency });
+    const graph = new QueryGraph(this.packagesWithScript, this.options.rejectCycles);
 
     const runner = this.options.stream
-      ? pkg => this.runScriptInPackageStreaming(pkg).then(pruneGraph(pkg))
-      : pkg => this.runScriptInPackageCapturing(pkg).then(pruneGraph(pkg));
+      ? pkg => this.runScriptInPackageStreaming(pkg)
+      : pkg => this.runScriptInPackageCapturing(pkg);
 
-    return pMap(iterable, runner, { concurrency: this.concurrency });
+    return new Promise((resolve, reject) => {
+      const returnValues = [];
+
+      const queueNextAvailablePackages = () =>
+        graph.getAvailablePackages().forEach(({ pkg, name }) => {
+          graph.markAsTaken(name);
+
+          queue
+            .add(() =>
+              runner(pkg)
+                .then(value => returnValues.push(value))
+                .then(() => graph.markAsDone(pkg))
+                .then(() => queueNextAvailablePackages())
+            )
+            .catch(reject);
+        });
+
+      queueNextAvailablePackages();
+
+      return queue.onIdle().then(() => resolve(returnValues));
+    });
   }
 
   runScriptInPackagesParallel() {
